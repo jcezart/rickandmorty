@@ -9,8 +9,15 @@ import com.devspace.rickandmorty.MyApplication
 import com.devspace.rickandmorty.core.data.local.CharacterRepository
 import com.devspace.rickandmorty.data.models.CharacterEntity
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class HomeViewModel(
@@ -18,95 +25,77 @@ class HomeViewModel(
     private val repository: CharacterRepository
 ) : AndroidViewModel(application) {
 
-    private val _characters = MutableStateFlow<List<CharacterEntity>>(emptyList())
-    val characters: StateFlow<List<CharacterEntity>> get() = _characters
-
-    private val _speciesList = MutableStateFlow<List<String>>(emptyList())
-    val speciesList: StateFlow<List<String>> get() = _speciesList
+    // Estados de busca e filtro
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> get() = _searchQuery
 
     private val _selectedSpecies = MutableStateFlow<String?>(null)
     val selectedSpecies: StateFlow<String?> get() = _selectedSpecies
 
-    private val _searchQuery = MutableStateFlow<String>("")
-    val searchQuery: StateFlow<String> get() = _searchQuery
+    // Lista de espécies para o filtro
+    private val _speciesList = MutableStateFlow<List<String>>(emptyList())
+    val speciesList: StateFlow<List<String>> get() = _speciesList
 
+    // Mensagem de erro
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> get() = _errorMessage
 
-    init {
-        // Carrega os personagens
-        fetchCharacters()
+    // Combinação dos estados de busca e filtro
+    val characters: StateFlow<List<CharacterEntity>> = combine(
+        _searchQuery,
+        _selectedSpecies
+    ) { query, species ->
+        Pair(query, species)
     }
-
-    private fun fetchCharacters() {
-        viewModelScope.launch {
-            repository.getAllCharacters().collectLatest { charactersList ->
-                _characters.value = charactersList
-                // Extrai espécies únicas para o filtro
-                val species = charactersList.map { it.species }.distinct().sorted()
-                _speciesList.value = species
-            }
-        }
-    }
-
-    fun filterBySpecies(species: String?) {
-        viewModelScope.launch {
-            try {
-                if (species.isNullOrEmpty()) {
-                    // Mostra todos os personagens
-                    repository.getAllCharacters().collectLatest { list ->
-                        _characters.value = list
+        .debounce(300) // Evita buscas excessivas enquanto o usuário digita
+        .flatMapLatest { (query, species) ->
+            flow {
+                try {
+                    val list = when {
+                        query.isNotBlank() && !species.isNullOrEmpty() ->
+                            repository.searchCharactersByName(query).filter { it.species.equals(species, ignoreCase = true) }
+                        query.isNotBlank() ->
+                            repository.searchCharactersByName(query)
+                        !species.isNullOrEmpty() ->
+                            repository.getCharactersBySpecies(species)
+                        else ->
+                            repository.getAllCharacters().first()
                     }
-                } else {
-                    // Mostra personagens filtrados por espécie
-                    val filteredList = repository.getCharactersBySpecies(species)
-                    _characters.value = filteredList
+                    _errorMessage.value = null
+                    emit(list)
+                } catch (e: Exception) {
+                    _errorMessage.value = "Erro ao buscar personagens. Tente novamente."
+                    emit(emptyList())
                 }
-                _selectedSpecies.value = species
-                _errorMessage.value = null
-            } catch (e: Exception) {
-                _errorMessage.value = "Erro ao filtrar personagens. Tente novamente."
+            }
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            emptyList()
+        )
+
+    init {
+        // Inicializa a lista de espécies
+        viewModelScope.launch {
+            repository.getAllCharacters().collect { charactersList ->
+                _speciesList.value = charactersList.map { it.species }.distinct().sorted()
             }
         }
     }
 
+    // Atualiza a query de busca
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
-        performSearch(query, _selectedSpecies.value)
     }
 
-    private fun performSearch(query: String, species: String?) {
-        viewModelScope.launch {
-            try {
-                if (query.isBlank()) {
-                    // Se a busca está vazia, mostrar todos ou aplicar o filtro de espécie
-                    if (species.isNullOrEmpty()) {
-                        repository.getAllCharacters().collectLatest { list ->
-                            _characters.value = list
-                        }
-                    } else {
-                        val filteredList = repository.getCharactersBySpecies(species)
-                        _characters.value = filteredList
-                    }
-                } else {
-                    // Executa a busca pelo nome
-                    val searchResults = repository.searchCharactersByName(query)
-                    // Opcional: se desejar combinar com o filtro de espécie
-                    val finalResults = if (!species.isNullOrEmpty()) {
-                        searchResults.filter { it.species.equals(species, ignoreCase = true) }
-                    } else {
-                        searchResults
-                    }
-                    _characters.value = finalResults
-                }
-                _errorMessage.value = null
-            } catch (e: Exception) {
-                _errorMessage.value = "Erro ao buscar personagens. Tente novamente."
-            }
-        }
+    // Atualiza o filtro de espécie
+    fun filterBySpecies(species: String?) {
+        _selectedSpecies.value = species
     }
 }
 
+// Fábrica para o HomeViewModel
 class HomeViewModelFactory(
     private val application: Application
 ) : ViewModelProvider.Factory {

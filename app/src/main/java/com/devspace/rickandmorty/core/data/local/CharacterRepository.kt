@@ -3,9 +3,7 @@ package com.devspace.rickandmorty.core.data.local
 
 import com.devspace.rickandmorty.core.data.remote.RemoteDataSource
 import com.devspace.rickandmorty.data.models.CharacterEntity
-
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 class CharacterRepository(

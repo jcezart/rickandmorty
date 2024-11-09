@@ -15,13 +15,13 @@ interface ApiService {
     @GET("character")
     suspend fun getCharactersBySpecies(
         @Query("species") species: String,
-        @Query("page") page: Int = 1
+        @Query("page") page: Int
     ): CharacterResponse
 
     @GET("character")
     suspend fun searchCharactersByName(
         @Query("name") name: String,
-        @Query("page") page: Int = 1
+        @Query("page") page: Int
     ): CharacterResponse
 
     @GET("character/{id}")
