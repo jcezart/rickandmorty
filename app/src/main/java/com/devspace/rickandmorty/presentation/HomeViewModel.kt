@@ -8,16 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.devspace.rickandmorty.MyApplication
 import com.devspace.rickandmorty.core.data.local.CharacterRepository
 import com.devspace.rickandmorty.data.models.CharacterEntity
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class HomeViewModel(
@@ -43,31 +34,27 @@ class HomeViewModel(
     // Combinação dos estados de busca e filtro
     val characters: StateFlow<List<CharacterEntity>> = combine(
         _searchQuery,
-        _selectedSpecies
-    ) { query, species ->
-        Pair(query, species)
+        _selectedSpecies,
+        repository.getAllCharacters()
+    ) { query, species, characterList ->
+        Triple(query, species, characterList)
     }
         .debounce(300) // Evita buscas excessivas enquanto o usuário digita
-        .flatMapLatest { (query, species) ->
-            flow {
-                try {
-                    val list = when {
-                        query.isNotBlank() && !species.isNullOrEmpty() ->
-                            repository.searchCharactersByName(query).filter { it.species.equals(species, ignoreCase = true) }
-                        query.isNotBlank() ->
-                            repository.searchCharactersByName(query)
-                        !species.isNullOrEmpty() ->
-                            repository.getCharactersBySpecies(species)
-                        else ->
-                            repository.getAllCharacters().first()
+        .map { (query, species, characterList) ->
+            val filteredList = when {
+                query.isNotBlank() && !species.isNullOrEmpty() ->
+                    characterList.filter {
+                        it.name.contains(query, ignoreCase = true) &&
+                                it.species.equals(species, ignoreCase = true)
                     }
-                    _errorMessage.value = null
-                    emit(list)
-                } catch (e: Exception) {
-                    _errorMessage.value = "Erro ao buscar personagens. Tente novamente."
-                    emit(emptyList())
-                }
+                query.isNotBlank() ->
+                    characterList.filter { it.name.contains(query, ignoreCase = true) }
+                !species.isNullOrEmpty() ->
+                    characterList.filter { it.species.equals(species, ignoreCase = true) }
+                else -> characterList
             }
+            _errorMessage.value = null
+            filteredList
         }
         .stateIn(
             viewModelScope,

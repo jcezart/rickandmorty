@@ -1,9 +1,9 @@
 package com.devspace.rickandmorty.core.data.local
 
-
 import com.devspace.rickandmorty.core.data.remote.RemoteDataSource
 import com.devspace.rickandmorty.data.models.CharacterEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 class CharacterRepository(
@@ -12,16 +12,29 @@ class CharacterRepository(
 ) {
     // Recupera todos os personagens, priorizando o local
     fun getAllCharacters(): Flow<List<CharacterEntity>> = flow {
-        // Emite os dados locais primeiro
-        localDataSource.getAllCharacters().collect { localCharacters ->
+        // Verifica se o banco de dados local está vazio
+        val localCharacters = localDataSource.getAllCharacters().first()
+        if (localCharacters.isEmpty()) {
+            // Se estiver vazio, busca os dados da API
+            try {
+                val remoteResponse = remoteDataSource.fetchAllCharacters()
+                localDataSource.insertCharacters(remoteResponse.results)
+                emit(remoteResponse.results)
+            } catch (e: Exception) {
+                // Em caso de erro, emite uma lista vazia ou trata o erro conforme necessário
+                emit(emptyList())
+            }
+        } else {
+            // Se não estiver vazio, emite os dados locais
             emit(localCharacters)
-        }
-        // Tenta atualizar com dados remotos
-        try {
-            val remoteResponse = remoteDataSource.fetchAllCharacters()
-            localDataSource.insertCharacters(remoteResponse.results)
-        } catch (e: Exception) {
-            // Handle exception (log, etc.)
+            // Opcionalmente, pode atualizar os dados com a API
+            try {
+                val remoteResponse = remoteDataSource.fetchAllCharacters()
+                localDataSource.insertCharacters(remoteResponse.results)
+                emit(remoteResponse.results)
+            } catch (e: Exception) {
+                // Em caso de erro, mantém os dados locais
+            }
         }
     }
 
